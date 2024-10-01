@@ -2,101 +2,129 @@ import streamlit as st
 import time
 import requests
 from binance.client import Client
+import sqlite3
+import pandas as pd
 
-# Initialize and Adjust trading fee percentage
-FEE_PERCENTAGE = 0.001  # 0.1% trading fee
+# SQLite3 Database Connection
+conn = sqlite3.connect('trading_bot.db', check_same_thread=False)
+c = conn.cursor()
 
-# Telegram settings
-ENABLE_TELEGRAM_REPORTING = False
-TELEGRAM_TOKEN = "XXXXXX"
-CHAT_ID = "XXXXXXX"
+# Create table if not exists
+c.execute('''
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT,
+    trade_type TEXT,
+    amount REAL,
+    price REAL,
+    pnl REAL,
+    usdt_balance REAL,
+    crypto_balance REAL,
+    timestamp TEXT
+)
+''')
 
-# Function to send telegram messages
-def send_telegram_message(message):
-    if not ENABLE_TELEGRAM_REPORTING:
-        return False
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
-    response = requests.post(url, payload)
-    return response.json()
+# Function to insert trade into the database
+def log_trade(symbol, trade_type, amount, price, pnl, usdt_balance, crypto_balance):
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    c.execute('''
+        INSERT INTO trades (symbol, trade_type, amount, price, pnl, usdt_balance, crypto_balance, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (symbol, trade_type, amount, price, pnl, usdt_balance, crypto_balance, timestamp))
+    conn.commit()
 
-# Function to get EMA
+# EMA Calculation
 def get_ema(symbol, interval, length, client):
     klines = client.get_klines(symbol=symbol, interval=interval)
     closes = [float(entry[4]) for entry in klines]
     return sum(closes[-length:]) / length
 
-# Function to get balance
-def get_balance(asset, client):
-    balance = client.get_asset_balance(asset=asset)
-    return float(balance['free'])
+# Trading Conditions (EMA Crossover Strategy)
+def trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance):
+    buy_order_value, sell_order_value, pnl = None, None, None
 
-# Function to get current price
-def get_current_price(symbol, client):
-    ticker = client.get_symbol_ticker(symbol=symbol)
-    return float(ticker['price'])
+    if short_ema > long_ema:
+        if usdt_balance > 10:
+            st.write("Short EMA is above Long EMA. Placing a BUY order.")
+            buy_order = client.order_market_buy(symbol=symbol, quoteOrderQty=usdt_balance)
+            buy_order_value = float(buy_order['fills'][0]['price'])
+            log_trade(symbol, 'BUY', usdt_balance, buy_order_value, pnl, usdt_balance, crypto_balance)
+            st.success(f'Buy Order placed. Amount: {usdt_balance}, Price: {buy_order_value}')
+    
+    elif short_ema < long_ema:
+        if crypto_balance > 0.0001:
+            st.write("Short EMA is below Long EMA. Placing a SELL order.")
+            sell_order = client.order_market_sell(symbol=symbol, quantity=crypto_balance)
+            sell_order_value = float(sell_order['fills'][0]['price'])
+            pnl = sell_order_value - buy_order_value
+            log_trade(symbol, 'SELL', crypto_balance, sell_order_value, pnl, usdt_balance, crypto_balance)
+            st.success(f'Sell Order placed. Amount: {crypto_balance}, PNL: {pnl}')
+    
+    return buy_order_value, sell_order_value, pnl
 
-# Streamlit App
-st.title("Binance Trading Bot")
+# Streamlit Dashboard Layout
+st.title("Binance Trading Bot Dashboard")
 
-# Input for API Key and Secret
-api_key = st.text_input("Enter Binance API Key", value="")
-api_secret = st.text_input("Enter Binance API Secret", value="", type="password")
+# User inputs for Binance API keys
+api_key = st.text_input("Enter Binance API Key", type="password")
+api_secret = st.text_input("Enter Binance API Secret", type="password")
 
-# Input for trading parameters
-symbol = st.text_input("Trading Pair (e.g., BTCUSDT)", value="BTCUSDT")
-interval = st.selectbox("Interval", options=["1m", "5m", "1h", "1d"])
-short_ema_period = st.number_input("Short EMA Period", min_value=1, value=7)
-long_ema_period = st.number_input("Long EMA Period", min_value=1, value=25)
-trade_amount = st.number_input("Trade Amount (USDT)", min_value=1.0, value=10.0)
+# Initialize Binance client
+client = Client(api_key, api_secret)
+# client.ping()  # Test connection
+# st.success("Successfully connected to Binance API!")
 
-# Button to start trading
-if st.button("Start Trading"):
-    if api_key and api_secret:
-        client = Client(api_key, api_secret)
-        last_cross = None
-        buy_price = None
+if client:
+    # User inputs for symbol, interval, and EMA periods
+    symbol = st.text_input("Enter the Trading Symbol (e.g., BTCUSDT)", value="BTCUSDT")
+    interval = st.selectbox("Select Interval", ['1m', '5m', '15m', '1h', '1d'])
+    short_ema_period = st.number_input("Short EMA Period", min_value=1, max_value=50, value=7)
+    long_ema_period = st.number_input("Long EMA Period", min_value=1, max_value=50, value=25)
 
-        trade_history = []
+    # Amount to trade
+    trade_amount = st.number_input("Amount to Trade in USDT", min_value=10.0, value=100.0)
+
+    if st.button("Start Trading", key="start_trading"):
+        usdt_balance = float(client.get_asset_balance(asset='USDT')['free'])
+        crypto_balance = float(client.get_asset_balance(asset=symbol[:-4])['free'])
+
+        # Create placeholders for dynamic updates
+        current_price_placeholder = st.empty()
+        usdt_balance_placeholder = st.empty()
+        crypto_balance_placeholder = st.empty()
+        short_ema_placeholder = st.empty()
+        long_ema_placeholder = st.empty()
+        buy_order_value_placeholder = st.empty()
+        sell_order_value_placeholder = st.empty()
+        pnl_placeholder = st.empty()
 
         while True:
-            try:
-                current_price = get_current_price(symbol, client)
-                short_ema = get_ema(symbol, interval, short_ema_period, client)
-                long_ema = get_ema(symbol, interval, long_ema_period, client)
+            short_ema = get_ema(symbol, interval, short_ema_period, client)
+            long_ema = get_ema(symbol, interval, long_ema_period, client)
+            current_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
 
-                if short_ema > long_ema and last_cross != 'above':
-                    busd_balance = get_balance("USDT", client)
-                    if busd_balance >= trade_amount:
-                        buy_order = client.order_market_buy(symbol=symbol, quantity=trade_amount)
-                        buy_price = current_price
-                        last_cross = 'above'
-                        trade_history.append({"action": "BUY", "price": buy_price, "amount": trade_amount, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
+            # Update placeholders
+            current_price_placeholder.write(f"Current Price: {current_price}")
+            usdt_balance_placeholder.write(f"USDT Balance: {usdt_balance}")
+            crypto_balance_placeholder.write(f"Crypto Balance: {crypto_balance}")
+            short_ema_placeholder.write(f"Short EMA: {short_ema}, Long EMA: {long_ema}")
 
-                elif short_ema < long_ema and last_cross != 'below':
-                    crypto_balance = get_balance(symbol[:-4], client)
-                    if crypto_balance > 0.0001:
-                        sell_order = client.order_market_sell(symbol=symbol, quantity=crypto_balance)
-                        sell_price = current_price
-                        last_cross = 'below'
-                        trade_history.append({"action": "SELL", "price": sell_price, "amount": crypto_balance, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
+            buy_order_value, sell_order_value, pnl = trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance)
 
-                # Display current status
-                st.write(f"Current Price: {current_price:.2f}, Short EMA: {short_ema:.2f}, Long EMA: {long_ema:.2f}")
-                st.write("Trade History:")
-                for trade in trade_history:
-                    st.write(f"{trade['timestamp']}: {trade['action']} at {trade['price']:.2f}, Amount: {trade['amount']}")
+            # Update the displayed values
+            buy_order_value_placeholder.write(f"Buy Order Value: {buy_order_value if buy_order_value else 'N/A'}")
+            sell_order_value_placeholder.write(f"Sell Order Value: {sell_order_value if sell_order_value else 'N/A'}")
+            pnl_placeholder.write(f"Profit/Loss (PNL): {pnl if pnl else 'N/A'}")
 
-                time.sleep(5)  # wait for 5 seconds before the next iteration
+            # Display the last executed trade
+            if buy_order_value or sell_order_value:
+                last_trade_data = pd.read_sql('SELECT * FROM trades ORDER BY id DESC LIMIT 1', conn)
+                st.write("Last Trade Details:")
+                st.dataframe(last_trade_data)
 
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-                break  # Exit the loop if there's an error
+            time.sleep(5)
 
-# Button to stop trading
-if st.button("Stop Trading"):
-    st.warning("Trading has been stopped.")
+    # Display Trade Log
+    st.write("Trade Log")
+    trade_data = pd.read_sql('SELECT * FROM trades', conn)
+    st.dataframe(trade_data)
