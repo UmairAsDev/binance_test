@@ -66,8 +66,8 @@ def trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_ba
 st.title("Binance Trading Bot Dashboard")
 
 # User inputs for Binance API keys
-api_key = st.text_input("Enter Binance API Key", value="", type="password")
-api_secret = st.text_input("Enter Binance API Secret", value="", type="password")
+api_key = st.text_input("Enter Binance API Key", type="password")
+api_secret = st.text_input("Enter Binance API Secret", type="password")
 
 # Initialize Binance client
 client = Client(api_key, api_secret)
