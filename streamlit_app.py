@@ -71,8 +71,8 @@ api_secret = st.text_input("Enter Binance API Secret", value="", type="password"
 
 # Initialize Binance client
 client = Client(api_key, api_secret)
-client.ping()  # Test connection
-st.success("Successfully connected to Binance API!")
+# client.ping()  # Test connection
+# st.success("Successfully connected to Binance API!")
 
 if client:
     # User inputs for symbol, interval, and EMA periods
