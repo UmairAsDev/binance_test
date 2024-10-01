@@ -123,6 +123,8 @@ if client:
                 st.dataframe(last_trade_data)
 
             time.sleep(5)
+    else:
+        print("Please enter API KEY AND secret key")    
 
     # Display Trade Log
     st.write("Trade Log")
