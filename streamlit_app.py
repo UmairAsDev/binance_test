@@ -4,7 +4,6 @@ import requests
 from binance.client import Client
 import sqlite3
 import pandas as pd
-from binance.exceptions import BinanceAPIException, BinanceRequestException, BinanceOrderException
 
 # SQLite3 Database Connection
 conn = sqlite3.connect('trading_bot.db', check_same_thread=False)
@@ -70,14 +69,10 @@ st.title("Binance Trading Bot Dashboard")
 api_key = st.text_input("Enter Binance API Key", value="", type="password")
 api_secret = st.text_input("Enter Binance API Secret", value="", type="password")
 
-# Initialize Binance client with error handling
-client = None
-try:
-    client = Client(api_key, api_secret)
-    client.ping()  # Test connection
-    st.success("Successfully connected to Binance API!")
-except (BinanceAPIException, BinanceRequestException) as e:
-    st.error(f"Error connecting to API: {e}")
+# Initialize Binance client
+client = Client(api_key, api_secret)
+client.ping()  # Test connection
+st.success("Successfully connected to Binance API!")
 
 if client:
     # User inputs for symbol, interval, and EMA periods
@@ -90,50 +85,44 @@ if client:
     trade_amount = st.number_input("Amount to Trade in USDT", min_value=10.0, value=100.0)
 
     if st.button("Start Trading", key="start_trading"):
-        try:
-            usdt_balance = float(client.get_asset_balance(asset='USDT')['free'])
-            crypto_balance = float(client.get_asset_balance(asset=symbol[:-4])['free'])
+        usdt_balance = float(client.get_asset_balance(asset='USDT')['free'])
+        crypto_balance = float(client.get_asset_balance(asset=symbol[:-4])['free'])
 
-            # Create placeholders for dynamic updates
-            current_price_placeholder = st.empty()
-            usdt_balance_placeholder = st.empty()
-            crypto_balance_placeholder = st.empty()
-            short_ema_placeholder = st.empty()
-            long_ema_placeholder = st.empty()
-            buy_order_value_placeholder = st.empty()
-            sell_order_value_placeholder = st.empty()
-            pnl_placeholder = st.empty()
+        # Create placeholders for dynamic updates
+        current_price_placeholder = st.empty()
+        usdt_balance_placeholder = st.empty()
+        crypto_balance_placeholder = st.empty()
+        short_ema_placeholder = st.empty()
+        long_ema_placeholder = st.empty()
+        buy_order_value_placeholder = st.empty()
+        sell_order_value_placeholder = st.empty()
+        pnl_placeholder = st.empty()
 
-            while True:
-                short_ema = get_ema(symbol, interval, short_ema_period, client)
-                long_ema = get_ema(symbol, interval, long_ema_period, client)
-                current_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
+        while True:
+            short_ema = get_ema(symbol, interval, short_ema_period, client)
+            long_ema = get_ema(symbol, interval, long_ema_period, client)
+            current_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
 
-                # Update placeholders
-                current_price_placeholder.write(f"Current Price: {current_price}")
-                usdt_balance_placeholder.write(f"USDT Balance: {usdt_balance}")
-                crypto_balance_placeholder.write(f"Crypto Balance: {crypto_balance}")
-                short_ema_placeholder.write(f"Short EMA: {short_ema}, Long EMA: {long_ema}")
+            # Update placeholders
+            current_price_placeholder.write(f"Current Price: {current_price}")
+            usdt_balance_placeholder.write(f"USDT Balance: {usdt_balance}")
+            crypto_balance_placeholder.write(f"Crypto Balance: {crypto_balance}")
+            short_ema_placeholder.write(f"Short EMA: {short_ema}, Long EMA: {long_ema}")
 
-                buy_order_value, sell_order_value, pnl = trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance)
+            buy_order_value, sell_order_value, pnl = trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance)
 
-                # Update the displayed values
-                buy_order_value_placeholder.write(f"Buy Order Value: {buy_order_value if buy_order_value else 'N/A'}")
-                sell_order_value_placeholder.write(f"Sell Order Value: {sell_order_value if sell_order_value else 'N/A'}")
-                pnl_placeholder.write(f"Profit/Loss (PNL): {pnl if pnl else 'N/A'}")
+            # Update the displayed values
+            buy_order_value_placeholder.write(f"Buy Order Value: {buy_order_value if buy_order_value else 'N/A'}")
+            sell_order_value_placeholder.write(f"Sell Order Value: {sell_order_value if sell_order_value else 'N/A'}")
+            pnl_placeholder.write(f"Profit/Loss (PNL): {pnl if pnl else 'N/A'}")
 
-                # Display the last executed trade
-                if buy_order_value or sell_order_value:
-                    last_trade_data = pd.read_sql('SELECT * FROM trades ORDER BY id DESC LIMIT 1', conn)
-                    st.write("Last Trade Details:")
-                    st.dataframe(last_trade_data)
+            # Display the last executed trade
+            if buy_order_value or sell_order_value:
+                last_trade_data = pd.read_sql('SELECT * FROM trades ORDER BY id DESC LIMIT 1', conn)
+                st.write("Last Trade Details:")
+                st.dataframe(last_trade_data)
 
-                time.sleep(5)
-
-        except (BinanceAPIException, BinanceOrderException) as e:
-            st.error(f"Error: {e}")
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
+            time.sleep(5)
 
     # Display Trade Log
     st.write("Trade Log")
