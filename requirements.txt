@@ -1,0 +1,3 @@
+python-binance
+streamlit
+db-sqlite3
