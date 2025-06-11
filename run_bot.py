@@ -3,13 +3,16 @@ import argparse
 import requests
 import os
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
+import streamlit as st
+
 
 # Initialize and Adjust trading fee percentage
 FEE_PERCENTAGE = 0.001  # 0.1% trading fee
 
 # Binance API Settings
-API_KEY = "cDGDZMjRz3NJdoOlScKE2ohQBRoZek10iCupDpx8h8s6ScjozQKr4c7bXm2J6QRY"
-API_SECRET = "Z7FXzTSRtJ4oPfKKov59awzRrNrdL0R2QPVmHviLEtTxZATsquZeLRGrJb51PjZu"
+API_KEY = "wfx1QuoAYyUkjVmvOSmFosdcMcfoPxrNTJGj4SSrTE2f0ZoefHxlQSQaDg8WCero"
+API_SECRET = "jaZJXbPuNgNqVTMP2ypXAtgznS0l1sQ81ar3mqyYzsUI3JmP9YezpCB3k17M1mtH"
 
 # Telegram settings
 ENABLE_TELEGRAM_REPORTING = False
@@ -58,7 +61,13 @@ def main():
     api_key = API_KEY
     api_secret = API_SECRET
 
-    client = Client(api_key, api_secret, testnet=True)
+    client = Client(api_key, api_secret)
+    client.API_URL = 'https://testnet.binance.vision/api'
+    server_time = client.get_server_time()
+    # Optionally adjust local timestamp offset
+
+
+    
 
     last_cross = None
     buy_price = None
@@ -80,7 +89,7 @@ def main():
                 if busd_balance > 10:
                     print("Short EMA crossed above Long EMA. Placing a BUY order.")
                     send_telegram_message("Short EMA crossed above Long EMA. Placing a BUY order.")
-                    buy_order = client.order_market_buy(symbol=args.symbol, quoteOrderQty=busd_balance)
+                    buy_order = client.order_market_buy(symbol=args.symbol, quoteOrderQty=busd_balance, recvWindow=60000)
                     buy_cost = float(buy_order['cummulativeQuoteQty'])  # this is the total cost in BUSD or quote currency
                     buy_amount = sum([float(fill['qty']) for fill in buy_order['fills']])
 
@@ -114,7 +123,11 @@ def main():
                 i = 0
 
             time.sleep(5)
-
+        except BinanceAPIException as e:
+            st.error(f"API error {e.code}: {e.message}")
+            if e.code in (-1021, -2015):
+                client.get_server_time()
+            time.sleep(10)
         except requests.exceptions.ReadTimeout:
             print_message = "Encountered ReadTimeout. Sleeping for a minute before retrying..."
             print(print_message)

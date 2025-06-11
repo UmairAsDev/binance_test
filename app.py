@@ -40,26 +40,35 @@ def get_ema(symbol, interval, length, client):
     return sum(closes[-length:]) / length
 
 # Trading Conditions (EMA Crossover Strategy)
-def trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance):
+def trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance, previous_buy_price=None):
     buy_order_value, sell_order_value, pnl = None, None, None
 
-    if short_ema > long_ema:
-        if usdt_balance > 10:
+    try:
+        if short_ema > long_ema and usdt_balance > 10:
             st.write("Short EMA is above Long EMA. Placing a BUY order.")
             buy_order = client.order_market_buy(symbol=symbol, quoteOrderQty=usdt_balance)
             buy_order_value = float(buy_order['fills'][0]['price'])
+
             log_trade(symbol, 'BUY', usdt_balance, buy_order_value, pnl, usdt_balance, crypto_balance)
             st.success(f'Buy Order placed. Amount: {usdt_balance}, Price: {buy_order_value}')
-    
-    elif short_ema < long_ema:
-        if crypto_balance > 0.0001:
+            return buy_order_value, sell_order_value, pnl  # Exit early after buy
+
+        elif short_ema < long_ema and crypto_balance > 0.0001:
             st.write("Short EMA is below Long EMA. Placing a SELL order.")
             sell_order = client.order_market_sell(symbol=symbol, quantity=crypto_balance)
             sell_order_value = float(sell_order['fills'][0]['price'])
-            pnl = sell_order_value - buy_order_value
+
+            if previous_buy_price is not None:
+                pnl = sell_order_value - previous_buy_price
+            else:
+                st.warning("No previous buy price found. PNL cannot be calculated.")
+
             log_trade(symbol, 'SELL', crypto_balance, sell_order_value, pnl, usdt_balance, crypto_balance)
-            st.success(f'Sell Order placed. Amount: {crypto_balance}, PNL: {pnl}')
-    
+            st.success(f'Sell Order placed. Amount: {crypto_balance}, Price: {sell_order_value}, PNL: {pnl}')
+
+    except Exception as e:
+        st.error(f"An error occurred during trading: {e}")
+
     return buy_order_value, sell_order_value, pnl
 
 # Streamlit Dashboard Layout
@@ -71,6 +80,8 @@ api_secret = st.text_input("Enter Binance API Secret", type="password")
 
 # Initialize Binance client
 client = Client(api_key, api_secret)
+client.API_URL = 'https://testnet.binance.vision/api'
+client.get_server_time()
 # client.ping()  # Test connection
 # st.success("Successfully connected to Binance API!")
 
@@ -108,8 +119,19 @@ if client:
             usdt_balance_placeholder.write(f"USDT Balance: {usdt_balance}")
             crypto_balance_placeholder.write(f"Crypto Balance: {crypto_balance}")
             short_ema_placeholder.write(f"Short EMA: {short_ema}, Long EMA: {long_ema}")
+            
+            if 'buy_price' not in st.session_state:
+                st.session_state.buy_price = None
 
-            buy_order_value, sell_order_value, pnl = trade_condition(symbol, short_ema, long_ema, client, usdt_balance, crypto_balance)
+            buy_order_value, sell_order_value, pnl = trade_condition(
+                symbol, short_ema, long_ema, client, usdt_balance, crypto_balance, st.session_state.buy_price
+            )
+
+            # Update buy price for future PNL calculation
+            if buy_order_value is not None:
+                st.session_state.buy_price = buy_order_value
+            elif sell_order_value is not None:
+                st.session_state.buy_price = None  # Reset after sell
 
             # Update the displayed values
             buy_order_value_placeholder.write(f"Buy Order Value: {buy_order_value if buy_order_value else 'N/A'}")
